@@ -9,14 +9,14 @@ HOST_IP=$(hostname -I | awk '{print $1}')
 echo "📁 Using Home Assistant config directory: $CONFIG_PATH"
 
 # ------------------------------------------------------------------------------
-# Install dependencies
+# Install required packages
 # ------------------------------------------------------------------------------
 echo "📦 Installing required packages..."
 apt update
 apt install -y ca-certificates curl gnupg lsb-release git unzip net-tools
 
 # ------------------------------------------------------------------------------
-# Install Docker
+# Install Docker if missing
 # ------------------------------------------------------------------------------
 if ! command -v docker &>/dev/null; then
     echo "🐳 Installing Docker..."
@@ -24,7 +24,7 @@ if ! command -v docker &>/dev/null; then
     curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-    https://download.docker.com/linux/debian $(lsb_release -cs) stable" | \
+https://download.docker.com/linux/debian $(lsb_release -cs) stable" | \
     tee /etc/apt/sources.list.d/docker.list > /dev/null
 
     apt update
@@ -34,19 +34,22 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# Create config structure
+# Create config path
 # ------------------------------------------------------------------------------
-echo "📁 Creating config directory at $CONFIG_PATH..."
+echo "📁 Preparing Home Assistant config directory..."
 mkdir -p "$CONFIG_PATH/custom_components"
 
 # ------------------------------------------------------------------------------
-# Pull and run containers
+# Pull Docker images
 # ------------------------------------------------------------------------------
 echo "⬇️ Pulling Docker images..."
 docker pull portainer/portainer-ce:latest
 docker pull filebrowser/filebrowser:latest
 docker pull homeassistant/home-assistant:stable
 
+# ------------------------------------------------------------------------------
+# Run containers
+# ------------------------------------------------------------------------------
 # Portainer
 if ! docker ps -a --format '{{.Names}}' | grep -q '^portainer$'; then
     echo "🚀 Starting Portainer..."
@@ -94,24 +97,26 @@ cd hacs
 
 curl -sfSL "https://github.com/hacs/integration/releases/download/$HACS_VERSION/hacs.zip" -o hacs.zip
 
-# Confirm the ZIP is valid
+# Validate ZIP contents
 unzip -l hacs.zip | grep -q __init__.py || {
-    echo "❌ hacs.zip appears invalid or incomplete. Aborting HACS install."
+    echo "❌ hacs.zip is invalid or missing files."
     exit 1
 }
 
 unzip -q hacs.zip
 rm hacs.zip
 
-# Add HACS to configuration.yaml
+# ------------------------------------------------------------------------------
+# Remove deprecated YAML line if exists
+# ------------------------------------------------------------------------------
 CONFIG_FILE="$CONFIG_PATH/configuration.yaml"
-touch "$CONFIG_FILE"
-if ! grep -q "hacs:" "$CONFIG_FILE"; then
-    echo -e "\n# HACS integration\nhacs:" >> "$CONFIG_FILE"
+if grep -q "^hacs:" "$CONFIG_FILE"; then
+    echo "🧹 Removing deprecated 'hacs:' YAML block..."
+    sed -i '/^hacs:/d' "$CONFIG_FILE"
 fi
 
 # ------------------------------------------------------------------------------
-# Setup dynamic /etc/issue banner
+# Setup /etc/issue banner
 # ------------------------------------------------------------------------------
 echo "🖥️ Setting up login banner..."
 
@@ -142,7 +147,7 @@ chmod +x /usr/local/bin/update-issue.sh
 
 cat <<EOF > /etc/systemd/system/update-issue.service
 [Unit]
-Description=Update /etc/issue with dynamic system info
+Description=Update /etc/issue with system info
 After=network-online.target
 
 [Service]
@@ -161,9 +166,9 @@ systemctl start update-issue.service
 # DONE
 # ------------------------------------------------------------------------------
 echo -e "\n✅ Setup complete!"
-echo "➡️ Services running at:"
+echo "➡️ Access your services:"
 echo "   🔧 Portainer:       https://$HOST_IP:9443"
 echo "   📁 FileBrowser:     http://$HOST_IP:8080"
 echo "   🏠 Home Assistant:  http://$HOST_IP:8123"
-echo "💡 Login banner updates at every boot."
-echo "🧠 HACS installed to: $CONFIG_PATH/custom_components/hacs"
+echo "📦 HACS installed at: $CONFIG_PATH/custom_components/hacs"
+echo "💡 Login screen updated with IP & system info."
