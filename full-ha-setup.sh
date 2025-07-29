@@ -1,49 +1,48 @@
 #!/bin/bash
 set -e
 
-# ------------------------------------------------------------------------------
-# DETECT HOME ASSISTANT CONFIG PATH FROM DOCKER
-# ------------------------------------------------------------------------------
-CONFIG_PATH=$(docker inspect homeassistant | grep '"Source":' | grep -i config | head -n1 | cut -d '"' -f4)
-if [ -z "$CONFIG_PATH" ]; then
-    echo "❌ Unable to detect Home Assistant config path from Docker volume mount."
-    exit 1
-fi
+# Configuration
+CONFIG_PATH="/opt/homeassistant/config"
+HACS_VERSION="1.32.0"
+HOST_IP=$(hostname -I | awk '{print $1}')
 
-echo "📁 Detected Home Assistant config directory: $CONFIG_PATH"
-mkdir -p "$CONFIG_PATH/custom_components"
+echo "📁 Using Home Assistant config directory: $CONFIG_PATH"
 
 # ------------------------------------------------------------------------------
-# INSTALL DEPENDENCIES
+# Install dependencies
 # ------------------------------------------------------------------------------
-echo "📦 Installing dependencies..."
+echo "📦 Installing required packages..."
 apt update
 apt install -y ca-certificates curl gnupg lsb-release git unzip net-tools
 
 # ------------------------------------------------------------------------------
-# INSTALL DOCKER (SKIPPED IF INSTALLED)
+# Install Docker
 # ------------------------------------------------------------------------------
 if ! command -v docker &>/dev/null; then
     echo "🐳 Installing Docker..."
     mkdir -p /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/debian/gpg | \
-        gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
     https://download.docker.com/linux/debian $(lsb_release -cs) stable" | \
     tee /etc/apt/sources.list.d/docker.list > /dev/null
 
     apt update
-    apt install -y docker-ce docker-ce-cli containerd.io \
-        docker-buildx-plugin docker-compose-plugin
+    apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 else
     echo "✅ Docker is already installed."
 fi
 
 # ------------------------------------------------------------------------------
-# PULL & RUN CONTAINERS
+# Create config structure
 # ------------------------------------------------------------------------------
-echo "⬇️ Pulling images..."
+echo "📁 Creating config directory at $CONFIG_PATH..."
+mkdir -p "$CONFIG_PATH/custom_components"
+
+# ------------------------------------------------------------------------------
+# Pull and run containers
+# ------------------------------------------------------------------------------
+echo "⬇️ Pulling Docker images..."
 docker pull portainer/portainer-ce:latest
 docker pull filebrowser/filebrowser:latest
 docker pull homeassistant/home-assistant:stable
@@ -85,27 +84,36 @@ if ! docker ps -a --format '{{.Names}}' | grep -q '^homeassistant$'; then
 fi
 
 # ------------------------------------------------------------------------------
-# INSTALL HACS
+# Install HACS
 # ------------------------------------------------------------------------------
-echo "⬇️ Installing HACS to $CONFIG_PATH/custom_components/hacs"
-cd "$CONFIG_PATH"
-mkdir -p custom_components
+echo "⬇️ Installing HACS v$HACS_VERSION..."
+cd "$CONFIG_PATH/custom_components"
+rm -rf hacs
+mkdir -p hacs
+cd hacs
 
-curl -sfSL https://github.com/hacs/integration/releases/download/1.32.0/hacs.zip -o hacs.zip
-unzip -q hacs.zip -d custom_components
+curl -sfSL "https://github.com/hacs/integration/releases/download/$HACS_VERSION/hacs.zip" -o hacs.zip
+
+# Confirm the ZIP is valid
+unzip -l hacs.zip | grep -q __init__.py || {
+    echo "❌ hacs.zip appears invalid or incomplete. Aborting HACS install."
+    exit 1
+}
+
+unzip -q hacs.zip
 rm hacs.zip
 
-# Add HACS to config if missing
+# Add HACS to configuration.yaml
 CONFIG_FILE="$CONFIG_PATH/configuration.yaml"
 touch "$CONFIG_FILE"
 if ! grep -q "hacs:" "$CONFIG_FILE"; then
-    echo -e "\n# HACS\nhacs:" >> "$CONFIG_FILE"
+    echo -e "\n# HACS integration\nhacs:" >> "$CONFIG_FILE"
 fi
 
 # ------------------------------------------------------------------------------
-# SETUP DYNAMIC /etc/issue BANNER
+# Setup dynamic /etc/issue banner
 # ------------------------------------------------------------------------------
-echo "🖥️ Setting up dynamic /etc/issue..."
+echo "🖥️ Setting up login banner..."
 
 cat << 'EOF' > /usr/local/bin/update-issue.sh
 #!/bin/bash
@@ -134,7 +142,7 @@ chmod +x /usr/local/bin/update-issue.sh
 
 cat <<EOF > /etc/systemd/system/update-issue.service
 [Unit]
-Description=Update /etc/issue with dynamic banner
+Description=Update /etc/issue with dynamic system info
 After=network-online.target
 
 [Service]
@@ -152,10 +160,10 @@ systemctl start update-issue.service
 # ------------------------------------------------------------------------------
 # DONE
 # ------------------------------------------------------------------------------
-IP=$(hostname -I | awk '{print $1}')
-echo -e "\n✅ All done!"
-echo "➡️ Access your services at:"
-echo "   🔧 Portainer:       https://$IP:9443"
-echo "   📁 FileBrowser:     http://$IP:8080"
-echo "   🏠 Home Assistant:  http://$IP:8123"
-echo "💡 Login banner will auto-update on every boot."
+echo -e "\n✅ Setup complete!"
+echo "➡️ Services running at:"
+echo "   🔧 Portainer:       https://$HOST_IP:9443"
+echo "   📁 FileBrowser:     http://$HOST_IP:8080"
+echo "   🏠 Home Assistant:  http://$HOST_IP:8123"
+echo "💡 Login banner updates at every boot."
+echo "🧠 HACS installed to: $CONFIG_PATH/custom_components/hacs"
